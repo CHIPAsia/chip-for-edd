@@ -63,7 +63,6 @@ final class EDD_Chip_Payments {
     // }
     
     $this->config();
-    $this->includes();
     // $this->setup_client();
     $this->filters(); // run filters
     $this->actions(); // call the purchase API
@@ -154,9 +153,6 @@ final class EDD_Chip_Payments {
   }
 
   // Load additional files
-  private function includes() {
-    require_once EDD_CHIP_CLASS_DIR . 'API.php';
-  } 
 
   // Load actions
   private function actions() {
@@ -240,17 +236,26 @@ final class EDD_Chip_Payments {
     // $success_redirect_url = get_permalink( edd_get_option( 'success_page', false ));
     // $success_callback_url = add_query_arg('payment-confirmation', 'chip', get_permalink( edd_get_option( 'success_page', false )));
 
+    // $failure_redirect = edd_send_back_to_checkout( '?payment-mode=chip' );
+    // $failure_redirect_url = get_permalink(edd_get_option('failure_page' ));
+    $failure_redirect_url = add_query_arg(['payment-redirect' => 'chip'], get_home_url());
+
+    $success_redirect_url = get_permalink(edd_get_option('success_page'));
+    
+    
+    // $test = add_query_arg(['payment-confirmation' => 'chip', 'id' => 'name'], get_home_url());
+    // exit($test);
+
     // Set Params
     $params = [
-          'success_callback' => 'https://webhook.site/a7f5ac22-709a-4413-93d8-f2b1d4b00320',
-          // 'success_callback' => $success_callback_url, // $callback_url
+          'success_callback' => 'https://webhook.site/a7f5ac22-709a-4413-93d8-f2b1d4b00320', // https://< wordpress-web >/?payment-confirmation=chip
           // 'success_redirect' => $success_redirect_url, // $callback_url
-          // 'failure_redirect' => $callback_url,
+          'failure_redirect' => $failure_redirect_url,
           // 'cancel_redirect'  => $callback_url,
           // 'force_recurring'  => $this->force_token == 'yes',
           // 'send_receipt'     => $this->purchase_sr == 'yes',
           // 'creator_agent'    => 'WooCommerce: ' . WC_CHIP_MODULE_VERSION,
-          // 'reference'        => $payment_id, //EDD()->session->get( 'edd_resume_payment' )
+          'reference'        => $payment_id, //EDD()->session->get( 'edd_resume_payment' )
           // 'platform'         => 'woocommerce',
           // 'due'              => $this->get_due_timestamp(),
           'purchase' => [
@@ -283,6 +288,11 @@ final class EDD_Chip_Payments {
  
     $purchase = $chip->create_payment($params); // create payment for purchase
 
+    // Store id in session
+    $_SESSION['chip_id'] = $purchase['id'];
+
+    // echo '<pre>'; print_r($_SESSION['chip_id']); echo '</pre>';
+
     // Redirect to CHIP checkout_url
     wp_redirect($purchase['checkout_url']);
   }
@@ -303,8 +313,11 @@ final class EDD_Chip_Payments {
 
     if (empty($public_key = edd_get_option('chip_public_key'))) {
       $secret_key = edd_get_option('chip_secret_key');
-      $chip_api = new Chip_EDD_API($secret_key, '');
-      $public_key = $chip_api->public_key();
+      // $chip_api = new Chip_EDD_API($secret_key, '');
+      // $public_key = $chip_api->public_key();
+      // $chip = $this->api();
+      $public_key = (new EDD_Chip_Payments())->get_public_key();
+  
       edd_update_option('chip_public_key', $public_key);
     }
 
@@ -323,14 +336,42 @@ final class EDD_Chip_Payments {
 
       // Change payment status to paid
       $old_status = 'pending'; // get status of payment
-      $new_status = 'publish';
+      $new_status = 'complete';
       
       edd_update_payment_status($decoded_content['reference'], $new_status, $old_status);
-
-      // Redirect to product page?
+      
+      // Send to success page
+      edd_send_to_success_page();
+      // edd_redirect( get_permalink( edd_get_option( 'success_page' ) ) );
       
       // Optionally, add a note to the payment
       // do_action('edd_insert_payment_note', $decoded_content['reference'], 'Payment completed via CHIP payment gateway. Transaction ID: ' . $decoded_content['reference']);
+    } 
+  }
+
+  public static function edd_chip_redirect() {
+    // Check for callback and bail out if parameter not exists
+    if (! isset( $_GET['payment-redirect']) || $_GET['payment-redirect'] !== 'chip') {
+      return;
+    }
+
+    // Get the ID and check for payment status using CHIP API retrieve payment
+    $payment = (new EDD_Chip_Payments())->api()->get_payment($_SESSION['chip_id']);
+    
+    // Check for the status if error
+    if ($payment['status'] === 'error') {
+
+      // Change payment status to failed
+      $old_status = 'pending'; // get status of payment
+      $new_status = 'failed';
+      
+      edd_update_payment_status($payment['reference'], $new_status, $old_status);
+
+      // Redirect to checkout
+      // edd_send_back_to_checkout( '?payment-mode=chip' );
+
+      // Redirect to failed page
+      edd_redirect(get_permalink(edd_get_option('failure_page' )));
     }
   }
 
@@ -346,6 +387,7 @@ final class EDD_Chip_Payments {
     return $this->cached_api;
   }
 
+  // Get public key
   public function get_public_key() {
     if ( empty( $this->public_key ) ){
       $this->public_key = str_replace( '\n', "\n", $this->api()->public_key() );
@@ -368,6 +410,7 @@ final class EDD_Chip_Payments {
 }
 
 add_action('init', array( 'EDD_Chip_Payments', 'edd_chip_listener'));
+add_action('init', array( 'EDD_Chip_Payments', 'edd_chip_redirect'));
 add_action( 'plugins_loaded', 'load_class_chip_edd' ); 
 
 function load_class_chip_edd() {
