@@ -94,4 +94,24 @@ class Chip_EDD_API
     
     return $response;
   }
+
+  public function get_payment( $payment_id ) {
+    // $this->log_info( sprintf( "get payment: %s", $payment_id ) );
+
+    // time() is to force fresh instead cache
+    $result = $this->call( 'GET', "/purchases/{$payment_id}/?time=" . time() );
+    // $this->log_info( sprintf( 'success check result: %s', var_export( $result, true ) ) );
+    
+    return $result;
+  }
+
+  public function public_key() {
+    // $this->log_info( 'getting public key' );
+
+    $result = $this->call( 'GET', '/public_key/' );
+
+    // $this->log_info( sprintf( 'public key: %s', var_export( $result, true ) ) );
+
+    return $result;
+  }
 }
