@@ -188,11 +188,9 @@ final class EDD_Chip_Payments {
 
     // Checking
     if ( ! is_user_logged_in() ) { // check if customer not login
-      // echo 'hello';
       $user = get_user_by( 'email', $profile['email'] );
 
       // $user = get_user_by( 'email', 'awis@chip-in.asia' );
-      // echo '<pre>'; print_r($user); echo '</pre>';
 
       // if ( $user ) {
       // 	edd_log_user_in( $user->ID, $user->user_login, '' );
@@ -244,13 +242,15 @@ final class EDD_Chip_Payments {
     
     
     // $test = add_query_arg(['payment-confirmation' => 'chip', 'id' => 'name'], get_home_url());
-    // exit($test);
+
+    // Set callback_url based on meta
+    $callback_url = add_query_arg(['payment-redirect' => 'chip', 'identifier' => $payment_id . '_edd_chip_redirect'], get_home_url());
 
     // Set Params
     $params = [
           'success_callback' => 'https://webhook.site/a7f5ac22-709a-4413-93d8-f2b1d4b00320', // https://< wordpress-web >/?payment-confirmation=chip
-          // 'success_redirect' => $success_redirect_url, // $callback_url
-          'failure_redirect' => $failure_redirect_url,
+          'success_redirect' => $callback_url, // $callback_url
+          'failure_redirect' => $callback_url, // $failure_redirect_url
           // 'cancel_redirect'  => $callback_url,
           // 'force_recurring'  => $this->force_token == 'yes',
           // 'send_receipt'     => $this->purchase_sr == 'yes',
@@ -289,9 +289,10 @@ final class EDD_Chip_Payments {
     $purchase = $chip->create_payment($params); // create payment for purchase
 
     // Store id in session
-    $_SESSION['chip_id'] = $purchase['id'];
+    // $_SESSION['chip_id'] = $purchase['id'];
 
-    // echo '<pre>'; print_r($_SESSION['chip_id']); echo '</pre>';
+    // Set identifier in meta
+    update_post_meta( $payment_id, '_edd_chip_redirect', $purchase['id'] );
 
     // Redirect to CHIP checkout_url
     wp_redirect($purchase['checkout_url']);
@@ -349,20 +350,49 @@ final class EDD_Chip_Payments {
     } 
   }
 
+  // Redirect from CHIP payment gateway
   public static function edd_chip_redirect() {
     // Check for callback and bail out if parameter not exists
     if (! isset( $_GET['payment-redirect']) || $_GET['payment-redirect'] !== 'chip') {
       return;
     }
 
+    // Get order_id from URL
+    if (preg_match('/^\d+/', $_GET['identifier'], $matches)) {
+      $order_id = $matches[0];
+    } else {
+        // No Valid order ID is pass
+        return;
+    }
+
+    // Get identifier to check in meta
+    $chip_id = get_post_meta($order_id, '_edd_chip_redirect', true);
+
     // Get the ID and check for payment status using CHIP API retrieve payment
-    $payment = (new EDD_Chip_Payments())->api()->get_payment($_SESSION['chip_id']);
-    
+    $payment = (new EDD_Chip_Payments())->api()->get_payment($chip_id);
+
+    // Change the order status
+    $order = (new EDD_Chip_Payments())->update_order_status($payment);
+  }
+
+  // Change the EDD order status
+  public function update_order_status($payment) {
+    $old_status = 'pending'; // get status of payment
+
+    // Check status for paid
+    if ($payment['status'] === 'paid') {
+      // Change payment status to paid
+      $new_status = 'complete';
+      
+      edd_update_payment_status($payment['reference'], $new_status, $old_status);
+      
+      // Send to success page
+      edd_send_to_success_page();  
+    } 
+
     // Check for the status if error
     if ($payment['status'] === 'error') {
-
       // Change payment status to failed
-      $old_status = 'pending'; // get status of payment
       $new_status = 'failed';
       
       edd_update_payment_status($payment['reference'], $new_status, $old_status);
