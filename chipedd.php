@@ -18,8 +18,6 @@
 
 use CHIP\EDD\Chip_EDD_API;
 
-require 'includes/API.php';
-
 final class EDD_Chip_Payments {
   private static $instance;
   public $gateway_id = 'chip';
@@ -29,7 +27,6 @@ final class EDD_Chip_Payments {
   public $secret_key;
   public $brand_id;
   public $public_key;
-
 
   public static function getInstance() {
     if ( ! isset( self::$instance ) && ! ( self::$instance instanceof EDD_Chip_Payments ) ) {
@@ -63,6 +60,7 @@ final class EDD_Chip_Payments {
     // }
     
     $this->config();
+    $this->includes();
     // $this->setup_client();
     $this->filters(); // run filters
     $this->actions(); // call the purchase API
@@ -134,6 +132,11 @@ final class EDD_Chip_Payments {
 
     return $gateway_settings;
   }
+
+  // Load additional files
+  private function includes() {
+    require_once EDD_CHIP_CLASS_DIR . 'API.php';
+  } 
 
   // Setup configuration for file paths
   private function config() {
