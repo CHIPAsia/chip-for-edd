@@ -9,6 +9,7 @@
  * Author URI: https://www.chip-in.asia
  * Requires PHP: 7.1
  * Requires at least: 4.7
+ * Requires Plugins: easy-digital-downloads
  *
  *
  * Copyright: © 2024 CHIP
@@ -44,7 +45,7 @@ final class EDD_Chip_Payments {
 
     // Run this separate so we can ditch as early as possible
     $this->register();
-
+   
     // Check if CHIP Gateway Active
     if ( ! edd_is_gateway_active( $this->gateway_id ) ) {
       return;
@@ -168,9 +169,18 @@ final class EDD_Chip_Payments {
     $purchase_data = EDD()->session->get( 'edd_purchase' );
     $profile   = EDD()->session->get( 'edd_purchase' )['user_info'];
 
+    // Changing price to cent
+    $purchase_data['price'] = $purchase_data['price'] * 100; // total price
+
+    // Loop thru $purchase_data['cart_details']
+    foreach($purchase_data['cart_details'] as $index => $product) {
+      $purchase_data['cart_details'][$index]['price'] = $product['price'] * 100;
+      $purchase_data['cart_details'][$index]['item_price'] = $product['price'] * 100;
+    }
+
     // Setup payment details
     $payment = array(
-      'price' => $purchase_data['price'],
+      'price' => $purchase_data['price'] * 100, // Example: 0.05 * 100 - RM5.00
       'date' => $purchase_data['date'],
       'user_email' => $purchase_data['user_email'],
       'purchase_key' => $purchase_data['purchase_key'],
@@ -239,22 +249,20 @@ final class EDD_Chip_Payments {
 
     // $failure_redirect = edd_send_back_to_checkout( '?payment-mode=chip' );
     // $failure_redirect_url = get_permalink(edd_get_option('failure_page' ));
-    $failure_redirect_url = add_query_arg(['payment-redirect' => 'chip'], get_home_url());
-
+    $failure_redirect_url = add_query_arg(['payment-redirect' => 'chip'], trailingslashit(get_home_url()));
     $success_redirect_url = get_permalink(edd_get_option('success_page'));
     
-    
-    // $test = add_query_arg(['payment-confirmation' => 'chip', 'id' => 'name'], get_home_url());
-
     // Set callback_url based on meta
-    $callback_url = add_query_arg(['payment-redirect' => 'chip', 'identifier' => $payment_id . '_edd_chip_redirect'], get_home_url());
+    $redirect_url = add_query_arg(['payment-redirect' => 'chip', 'identifier' => $payment_id . '_edd_chip_redirect'], trailingslashit(get_home_url()));
+    $callback_url = add_query_arg(['payment-confirmation' => 'chip'], trailingslashit(get_home_url()));
 
     // Set Params
     $params = [
-          'success_callback' => 'https://webhook.site/a7f5ac22-709a-4413-93d8-f2b1d4b00320', // https://< wordpress-web >/?payment-confirmation=chip
-          'success_redirect' => $callback_url, // $callback_url
-          'failure_redirect' => $callback_url, // $failure_redirect_url
-          // 'cancel_redirect'  => $callback_url,
+          // 'success_callback' => 'https://webhook.site/a7f5ac22-709a-4413-93d8-f2b1d4b00320',
+          'success_callback' => $callback_url, // https://< wordpress-web >/?payment-confirmation=chip
+          // 'success_redirect' => $redirect_url, // $callback_url
+          // 'failure_redirect' => $redirect_url, // $failure_redirect_url
+          // 'cancel_redirect'  => $redirect_url,
           // 'force_recurring'  => $this->force_token == 'yes',
           // 'send_receipt'     => $this->purchase_sr == 'yes',
           // 'creator_agent'    => 'WooCommerce: ' . WC_CHIP_MODULE_VERSION,
@@ -296,6 +304,7 @@ final class EDD_Chip_Payments {
 
     // Set identifier in meta
     update_post_meta( $payment_id, '_edd_chip_redirect', $purchase['id'] );
+    edd_debug_log( '[INFO] Adding meta for edd_chip_redirect, Order ID #' . $payment_id . ' with CHIP ID ' . $purchase['id']);
 
     // Redirect to CHIP checkout_url
     wp_redirect($purchase['checkout_url']);
@@ -308,9 +317,13 @@ final class EDD_Chip_Payments {
       return;
     }
 
+    edd_debug_log('[INFO] Payment Confirmation (edd_chip_listener) callback started');
+
     # bail out if X Signature not exists
     if ( !isset($_SERVER['HTTP_X_SIGNATURE']) ) {
-      wp_die('No X Signature received from headers');
+      edd_debug_log('[INFO] No X Signature received from headers');
+      return;
+      // wp_die('No X Signature received from headers');
     }
 
     $content = file_get_contents('php://input');
@@ -321,16 +334,22 @@ final class EDD_Chip_Payments {
       // $public_key = $chip_api->public_key();
       // $chip = $this->api();
       $public_key = (new EDD_Chip_Payments())->get_public_key();
-  
+
+      edd_debug_log('[INFO] Public key empty, updating new public key');
       edd_update_option('chip_public_key', $public_key);
     }
 
     $public_key = \str_replace( '\n', "\n", $public_key );
 
+    edd_debug_log('[INFO] Public Key Set: ' . $public_key);
+
     // Verify the content
     if ( openssl_verify( $content,  base64_decode($_SERVER['HTTP_X_SIGNATURE']), $public_key, 'sha256WithRSAEncryption' ) != 1 ) {
       // header( 'Forbidden', true, 403 );
-      wp_die('Invalid X Signature');
+      edd_debug_log('[INFO] Invalid X Signature');
+      edd_debug_log('[INFO] X-Signature: ' . $_SERVER['HTTP_X_SIGNATURE']);
+      // wp_die('Invalid X Signature');
+      return;
     }
 
     $decoded_content = json_decode($content, true);
@@ -342,9 +361,11 @@ final class EDD_Chip_Payments {
       $old_status = 'pending'; // get status of payment
       $new_status = 'complete';
       
+      edd_debug_log('[INFO] Updating payment status for Order ID #' . $decoded_content['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
       edd_update_payment_status($decoded_content['reference'], $new_status, $old_status);
       
       // Send to success page
+      edd_debug_log('[INFO] Sending to success page');
       edd_send_to_success_page();
       // edd_redirect( get_permalink( edd_get_option( 'success_page' ) ) );
       
@@ -360,19 +381,32 @@ final class EDD_Chip_Payments {
       return;
     }
 
+    edd_debug_log('[INFO] Parameter payment-redirect or payment-redirect=chip requested');
+
     // Get order_id from URL
     if (preg_match('/^\d+/', $_GET['identifier'], $matches)) {
       $order_id = $matches[0];
+      edd_debug_log('[INFO] Order ID retrieved from URL #' . $order_id);
     } else {
         // No Valid order ID is pass
+        edd_debug_log('[INFO] Invalid Order ID format in parameter identifier');
         return;
     }
 
     // Get identifier to check in meta
     $chip_id = get_post_meta($order_id, '_edd_chip_redirect', true);
 
+    // If CHIP ID retrieved from meta
+    if (! empty($chip_id)) {
+      edd_debug_log('[INFO] CHIP ID retrieved from meta #' . $chip_id);
+    } else {
+      edd_debug_log('[INFO] CHIP ID of Order ID #' . $order_id . ' does not exist in meta');
+      return;
+    }
+
     // Get the ID and check for payment status using CHIP API retrieve payment
     $payment = (new EDD_Chip_Payments())->api()->get_payment($chip_id);
+    edd_debug_log('[INFO] Sending CHIP API GET request for Payment Status');
 
     // Change the order status
     $order = (new EDD_Chip_Payments())->update_order_status($payment);
@@ -387,9 +421,11 @@ final class EDD_Chip_Payments {
       // Change payment status to paid
       $new_status = 'complete';
       
+      edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
       edd_update_payment_status($payment['reference'], $new_status, $old_status);
       
       // Send to success page
+      edd_debug_log('[INFO] Sending to success page');
       edd_send_to_success_page();  
     } 
 
@@ -398,12 +434,14 @@ final class EDD_Chip_Payments {
       // Change payment status to failed
       $new_status = 'failed';
       
+      edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
       edd_update_payment_status($payment['reference'], $new_status, $old_status);
 
       // Redirect to checkout
       // edd_send_back_to_checkout( '?payment-mode=chip' );
 
       // Redirect to failed page
+      edd_debug_log('[INFO] Redirecting to failure page');
       edd_redirect(get_permalink(edd_get_option('failure_page' )));
     }
   }
