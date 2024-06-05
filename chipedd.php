@@ -169,18 +169,15 @@ final class EDD_Chip_Payments {
     $purchase_data = EDD()->session->get( 'edd_purchase' );
     $profile   = EDD()->session->get( 'edd_purchase' )['user_info'];
 
-    // Changing price to cent
-    $purchase_data['price'] = $purchase_data['price'] * 100; // total price
-
     // Loop thru $purchase_data['cart_details']
     foreach($purchase_data['cart_details'] as $index => $product) {
       $purchase_data['cart_details'][$index]['price'] = $product['price'] * 100;
-      $purchase_data['cart_details'][$index]['item_price'] = $product['price'] * 100;
     }
 
     // Setup payment details
     $payment = array(
-      'price' => $purchase_data['price'] * 100, // Example: 0.05 * 100 - RM5.00
+      // 'price' => $purchase_data['price'] * 100, // Example: 0.05 * 100 - RM5.00
+      'price' => $purchase_data['price'],
       'date' => $purchase_data['date'],
       'user_email' => $purchase_data['user_email'],
       'purchase_key' => $purchase_data['purchase_key'],
