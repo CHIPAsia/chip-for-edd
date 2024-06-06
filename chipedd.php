@@ -432,7 +432,7 @@ final class EDD_Chip_Payments {
         // Change payment status to paid
         $new_status = 'complete';
         
-        edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
+        edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($previous_payment_status) . ' to ' . strtoupper($new_status));
         edd_update_payment_status($payment['reference'], $new_status, $previous_payment_status);
         
         // Send to success page
@@ -444,7 +444,7 @@ final class EDD_Chip_Payments {
         // Change payment status to failed
         $new_status = 'failed';
         
-        edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
+        edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($previous_payment_status) . ' to ' . strtoupper($new_status));
         edd_update_payment_status($payment['reference'], $new_status, $previous_payment_status);
 
         // Redirect to checkout
