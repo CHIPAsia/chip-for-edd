@@ -257,9 +257,9 @@ final class EDD_Chip_Payments {
     $params = [
           // 'success_callback' => 'https://webhook.site/a7f5ac22-709a-4413-93d8-f2b1d4b00320',
           'success_callback' => $callback_url, // https://< wordpress-web >/?payment-confirmation=chip
-          // 'success_redirect' => $redirect_url, // $callback_url
-          // 'failure_redirect' => $redirect_url, // $failure_redirect_url
-          // 'cancel_redirect'  => $redirect_url,
+          'success_redirect' => $redirect_url, // $callback_url
+          'failure_redirect' => $redirect_url, // $failure_redirect_url
+          'cancel_redirect'  => $redirect_url,
           // 'force_recurring'  => $this->force_token == 'yes',
           // 'send_receipt'     => $this->purchase_sr == 'yes',
           // 'creator_agent'    => 'WooCommerce: ' . WC_CHIP_MODULE_VERSION,
@@ -405,41 +405,66 @@ final class EDD_Chip_Payments {
     $payment = (new EDD_Chip_Payments())->api()->get_payment($chip_id);
     edd_debug_log('[INFO] Sending CHIP API GET request for Payment Status');
 
+    edd_debug_log('[INFO] Payment Info from CHIP API: ' . $payment['status']);
+
+
     // Change the order status
-    $order = (new EDD_Chip_Payments())->update_order_status($payment);
+    $order = (new EDD_Chip_Payments())->update_order_status($payment, $order_id);
   }
 
   // Change the EDD order status
-  public function update_order_status($payment) {
-    $old_status = 'pending'; // get status of payment
+  public function update_order_status($payment, $order_id) {
+    // $old_status = 'pending'; // get status of payment
 
-    // Check status for paid
-    if ($payment['status'] === 'paid') {
-      // Change payment status to paid
-      $new_status = 'complete';
-      
-      edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
-      edd_update_payment_status($payment['reference'], $new_status, $old_status);
-      
-      // Send to success page
-      edd_debug_log('[INFO] Sending to success page');
-      edd_send_to_success_page();  
-    } 
+    edd_debug_log('[INFO] Checking and updating order status (function: update_order_status())');
 
-    // Check for the status if error
-    if ($payment['status'] === 'error') {
-      // Change payment status to failed
-      $new_status = 'failed';
-      
-      edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
-      edd_update_payment_status($payment['reference'], $new_status, $old_status);
+    // Get payment status in DB
+    $payment_db = new EDD_Payment($order_id);
+    $previous_payment_status = strtolower($payment_db->status);
+    
+    edd_debug_log('[TEST] Previous payment status: ' . $previous_payment_status);
 
-      // Redirect to checkout
-      // edd_send_back_to_checkout( '?payment-mode=chip' );
+    // If Payment Status in DB is not Empty
+    if (! empty($previous_payment_status)) {
 
-      // Redirect to failed page
-      edd_debug_log('[INFO] Redirecting to failure page');
-      edd_redirect(get_permalink(edd_get_option('failure_page' )));
+      // Check status for paid
+      if ($payment['status'] === 'paid') {
+        // Change payment status to paid
+        $new_status = 'complete';
+        
+        edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
+        edd_update_payment_status($payment['reference'], $new_status, $previous_payment_status);
+        
+        // Send to success page
+        edd_debug_log('[INFO] Sending to success page');
+        edd_send_to_success_page();  
+      } 
+      // Check for the status if error
+      elseif ($payment['status'] === 'error') {
+        // Change payment status to failed
+        $new_status = 'failed';
+        
+        edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
+        edd_update_payment_status($payment['reference'], $new_status, $previous_payment_status);
+
+        // Redirect to checkout
+        // edd_send_back_to_checkout( '?payment-mode=chip' );
+
+        // Redirect to failed page
+        edd_debug_log('[INFO] Redirecting to failure page');
+        edd_redirect(get_permalink(edd_get_option('failure_page' )));
+      }
+      elseif ($payment['status'] === 'viewed') {
+        edd_debug_log('[INFO] Payment Status in CHIP API: ' . $payment['status']);
+        return;
+      }
+      elseif ($payment['status'] === 'overdue') {
+        edd_debug_log('[INFO] Payment Status in CHIP API: ' . $payment['status']);
+        return;
+      }
+    } else {
+        edd_debug_log('[INFO] Payment Status in DB is empty');
+        return;
     }
   }
 
