@@ -1,5 +1,4 @@
 <?php
-//concurrency between redirect and callback
 
 final class EDD_Chip_Payments {
   private static $instance;
@@ -146,8 +145,6 @@ final class EDD_Chip_Payments {
     return $gateway_settings;
   }
 
-  // Load additional files
-
   // Load actions
   private function actions() {
     add_action( 'edd_gateway_' . $this->gateway_id, array( $this, 'edd_purchase' ) );
@@ -164,7 +161,7 @@ final class EDD_Chip_Payments {
     $full_name = $profile['first_name'] . ' ' . $profile['last_name'];
 
     // Loop thru $payment_data['cart_details']
-    foreach($payment_data['cart_details'] as $index => $product) {
+    foreach( $payment_data['cart_details'] as $index => $product ) {
       $payment_data['cart_details'][$index]['price'] = round( $product['item_price'] * 100 );
       $payment_data['cart_details'][$index]['discount'] = round( $product['discount'] * 100 );
     }
@@ -184,7 +181,7 @@ final class EDD_Chip_Payments {
     );
 
     // Record the pending payment (Insert into database) - Generate order ID
-    $payment_id = edd_insert_payment($payment);
+    $payment_id = edd_insert_payment( $payment );
     
     // Set callback_url based on meta
     $redirect_url = add_query_arg( [ 'payment-redirect' => 'chip', 'identifier' => $payment_id, 'edd-gateway' => $this->gateway_id ], trailingslashit( home_url() ) );
@@ -214,9 +211,9 @@ final class EDD_Chip_Payments {
       'payment_method_whitelist' => array_keys( $this->payment_method_whitelist ),
     ];
 
-    foreach (['razer_atome', 'razer_grabpay', 'razer_tng', 'razer_shopeepay','razer_maybankqr'] as $ewallet) {
+    foreach ( ['razer_atome', 'razer_grabpay', 'razer_tng', 'razer_shopeepay','razer_maybankqr'] as $ewallet ) {
       if ( in_array($ewallet, $params['payment_method_whitelist'] ) ) {
-        if ( !in_array('razer', $params['payment_method_whitelist'])) {
+        if ( !in_array( 'razer', $params['payment_method_whitelist'] ) ) {
           $params['payment_method_whitelist'][]= 'razer';
           break;
         }
@@ -225,17 +222,17 @@ final class EDD_Chip_Payments {
 
     $chip = $this->client; // call CHIP API
 
-    if ($this->success_redirect_switch) {
-      unset($params['success_redirect']);
+    if ( $this->success_redirect_switch ) {
+      unset( $params['success_redirect'] );
     }
 
-    if ($this->success_callback_switch) {
-      unset($params['success_callback']);
+    if ( $this->success_callback_switch ) {
+      unset( $params['success_callback'] );
     }
 
     $params = apply_filters( 'edd_gateway_' . $this->gateway_id . '_purchase_params', $params, $this );
 
-    $purchase = $chip->create_payment($params); // create payment for purchase
+    $purchase = $chip->create_payment( $params ); // create payment for purchase
 
     if ( !array_key_exists( 'id', $purchase ) ) {
       edd_set_error( 'chip_failed_to_create_purchase', sprintf(__( 'There is an error to create purchase. %s', 'chip-for-edd' ), print_r($purchase,true) ) );
@@ -269,13 +266,13 @@ final class EDD_Chip_Payments {
     edd_debug_log('[INFO] Payment Confirmation (edd_chip_listener) callback started');
 
     # bail out if X Signature not exists
-    if ( !isset($_SERVER['HTTP_X_SIGNATURE']) ) {
+    if ( !isset( $_SERVER['HTTP_X_SIGNATURE'] ) ) {
       edd_debug_log('[INFO] No X Signature received from headers');
       return;
       // wp_die('No X Signature received from headers');
     }
 
-    $content = file_get_contents('php://input');
+    $content = file_get_contents( 'php://input' );
 
     if ( empty( $public_key = ( self::get_instance() )->public_key ) ) {
       $public_key = ( self::get_instance() )->get_public_key();
@@ -292,10 +289,10 @@ final class EDD_Chip_Payments {
       return;
     }
 
-    $decoded_content = json_decode($content, true);
+    $decoded_content = json_decode( $content, true );
 
     // Check status for paid
-    if ($decoded_content['status'] === 'paid') {
+    if ( $decoded_content['status'] === 'paid' ) {
 
       // Change payment status to paid
       $previous_payment_status = edd_get_payment_status( absint( $decoded_content['reference'] ) );
@@ -306,7 +303,7 @@ final class EDD_Chip_Payments {
         edd_update_payment_status( absint( $decoded_content['reference'] ), $new_status );
       }
  
-	    edd_die('Callback processed successfully', 'CHIP', 200);
+	    edd_die( 'Callback processed successfully', 'CHIP', 200 );
     } 
   }
 
