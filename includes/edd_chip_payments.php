@@ -1,5 +1,8 @@
 <?php
 
+//total_override
+//concurrency between redirect and callback
+
 final class EDD_Chip_Payments {
   private static $instance;
   public $gateway_id = 'chip';
@@ -7,6 +10,9 @@ final class EDD_Chip_Payments {
   public $purchase;
   public $secret_key;
   public $brand_id;
+  public $send_receipt;
+  public $success_redirect_switch;
+  public $success_callback_switch;
   public $public_key;
   public $is_setup = null;
 
@@ -22,17 +28,23 @@ final class EDD_Chip_Payments {
     // Initialize all 
     $this->secret_key = edd_get_option('chip_secret_key');
     $this->brand_id = edd_get_option('chip_brand_id');
-    // $this->public_key = 
+    $this->send_receipt = edd_get_option('chip_send_receipt');
+    $this->success_redirect_switch = edd_get_option('chip_disable_redirect');
+    $this->success_callback_switch = edd_get_option('chip_disable_callback');
 
     // Run this separate so we can ditch as early as possible
     $this->register();
-   
+
     // Check if CHIP Gateway Active
     if ( ! edd_is_gateway_active( $this->gateway_id ) ) {
       return;
     }
 
     $this->setup_client();
+
+    // Assign public key after setup_client
+    $this->public_key = $this->get_public_key();
+
     $this->filters(); // run filters
     $this->actions(); // call the purchase API
   }
@@ -75,13 +87,12 @@ final class EDD_Chip_Payments {
 
   // Add Chip Setting in EDD Payment Setting
   public function register_gateway_settings( $gateway_settings ) {
+    // reference: includes/admin/settings/register-settings.php
     $default_chip_settings = array(
       'chip_settings'              => array(
         'id'   => 'chip_settings',
         'name' => '<h3>' . __( 'CHIP Settings', 'chip-for-edd' ) . '</h3>',
         'type' => 'header',
-        'tooltip_title' => __( 'Connect with CHIP', 'easy-digital-downloads' ),
-        'tooltip_desc'  => __( 'Connecting your store with CHIP allows Easy Digital Downloads to automatically configure your store to securely communicate with CHIP.<br \><br \>', 'easy-digital-downloads'),
       ),
       'chip_secret_key' => array(
         'id'   => 'chip_secret_key',
@@ -96,6 +107,31 @@ final class EDD_Chip_Payments {
         'desc' => __( 'Brand ID can be obtained from CHIP Collect Dashboard >> Developers >> Brands', 'chip-for-edd' ),
         'type' => 'text',
         'size' => 'regular',
+      ),
+      'chip_send_receipt' => array(
+        'id'   => 'chip_send_receipt',
+        'name' => __( 'Send Receipt', 'chip-for-edd' ),
+        'desc' => __( 'Toggle on for CHIP to send receipt upon successful payment. If activated, CHIP will send purchase receipt upon payment completion.', 'chip-for-edd' ),
+        'type' => 'checkbox_toggle',
+      ),
+      'chip_troubleshooting' => array(
+        'id'   => 'chip_troubleshooting',
+        'name' => '<h3>' . __( 'Troubleshooting', 'chip-for-edd' ) . '</h3>',
+        'type' => 'header',
+        'tooltip_title' => __( 'Troubleshooting', 'chip-for-edd' ),
+        'tooltip_desc'  => __( 'This for troubleshooting where all of the option should be turned off', 'chip-for-edd'),
+      ),
+      'chip_disable_redirect' => array(
+        'id'   => 'chip_disable_redirect',
+        'name' => __( 'Disable Success Redirect', 'chip-for-edd' ),
+        'desc' => __( 'Toggle on for disabling success redirect. This should be disabled on production environment.', 'chip-for-edd' ),
+        'type' => 'checkbox_toggle',
+      ),
+      'chip_disable_callback' => array(
+        'id'   => 'chip_disable_callback',
+        'name' => __( 'Disable Success Callback', 'chip-for-edd' ),
+        'desc' => __( 'Toggle on for disabling success callback. This should be disabled on production environment.', 'chip-for-edd' ),
+        'type' => 'checkbox_toggle',
       ),
     );
 
@@ -161,7 +197,7 @@ final class EDD_Chip_Payments {
           'success_redirect' => $redirect_url,
           'failure_redirect' => $redirect_url,
           'cancel_redirect'  => $redirect_url,
-          // 'send_receipt'     => $this->purchase_sr == 'yes',
+          'send_receipt'     => $this->send_receipt,
           'creator_agent'    => 'EDD: ' . EDD_CHIP_MODULE_VERSION,
           'reference'        => $payment_id, //EDD()->session->get( 'edd_resume_payment' )
           'platform'         => 'web', // to be modified later
@@ -179,6 +215,16 @@ final class EDD_Chip_Payments {
         ];
 
     $chip = $this->client; // call CHIP API
+
+    if ($this->success_redirect_switch) {
+      unset($params['success_redirect']);
+    }
+
+    if ($this->success_callback_switch) {
+      unset($params['success_callback']);
+    }
+
+    $params = apply_filters( 'edd_gateway_' . $this->gateway_id . '_purchase_params', $params, $this );
 
     $purchase = $chip->create_payment($params); // create payment for purchase
 
@@ -222,18 +268,7 @@ final class EDD_Chip_Payments {
 
     $content = file_get_contents('php://input');
 
-    if (empty($public_key = edd_get_option('chip_public_key'))) {
-      $secret_key = edd_get_option('chip_secret_key');
-      // $chip_api = new CHIP\EDD\Chip_EDD_API($secret_key, '');
-      // $public_key = $chip_api->public_key();
-      // $chip = $this->client;
-      $public_key = (new EDD_Chip_Payments())->get_public_key();
-
-      edd_debug_log('[INFO] Public key empty, updating new public key');
-      edd_update_option('chip_public_key', $public_key);
-    }
-
-    $public_key = \str_replace( '\n', "\n", $public_key );
+    $public_key = (self::get_instance()->public_key);
 
     edd_debug_log('[INFO] Public Key Set: ' . $public_key);
 
@@ -258,13 +293,7 @@ final class EDD_Chip_Payments {
       edd_debug_log('[INFO] Updating payment status for Order ID #' . $decoded_content['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
       edd_update_payment_status($decoded_content['reference'], $new_status, $old_status);
       
-      // Send to success page
-      edd_debug_log('[INFO] Sending to success page');
-      edd_send_to_success_page();
-      // edd_redirect( get_permalink( edd_get_option( 'success_page' ) ) );
-      
-      // Optionally, add a note to the payment
-      // do_action('edd_insert_payment_note', $decoded_content['reference'], 'Payment completed via CHIP payment gateway. Transaction ID: ' . $decoded_content['reference']);
+	    edd_die('Callback processed successfully', 'CHIP', 200);
     } 
   }
 
@@ -373,12 +402,14 @@ final class EDD_Chip_Payments {
 
   // Get public key
   public function get_public_key() {
-    if ( empty( $this->public_key ) ){
-      $this->public_key = str_replace( '\n', "\n", $this->client->public_key() );
-      // $this->update_option( 'public_key', $this->public_key );
+    if ( empty( $public_key = edd_get_option( 'chip_public_key', '' ) ) ) {
+      $public_key = str_replace( '\n', "\n", $this->client->public_key() );
+
+      edd_debug_log('[INFO] Public key empty, updating new public key');
+      edd_update_option('chip_public_key', $public_key);
     }
 
-    return $this->public_key;
+    return $public_key;
   }
 
   public function filters() {
