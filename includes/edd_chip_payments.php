@@ -294,6 +294,8 @@ final class EDD_Chip_Payments {
     // Check status for paid
     if ( $decoded_content['status'] === 'paid' ) {
 
+      ( self::get_instance() )->get_lock( $decoded_content['reference'] );
+
       // Change payment status to paid
       $previous_payment_status = edd_get_payment_status( absint( $decoded_content['reference'] ) );
       $new_status = 'complete';
@@ -302,6 +304,8 @@ final class EDD_Chip_Payments {
         edd_debug_log('[INFO] Updating payment status for Order ID #' . $decoded_content['reference'] . ' from ' . strtoupper($previous_payment_status) . ' to ' . strtoupper($new_status));
         edd_update_payment_status( absint( $decoded_content['reference'] ), $new_status );
       }
+
+      ( self::get_instance() )->release_lock( $decoded_content['reference'] );
  
 	    edd_die( 'Callback processed successfully', 'CHIP', 200 );
     } 
@@ -359,6 +363,9 @@ final class EDD_Chip_Payments {
     // Get payment status in DB
     // $payment_db = new EDD_Payment($order_id);
     // $previous_payment_status = strtolower($payment_db->status);
+
+    $this->get_lock( $payment['reference'] );
+
     $previous_payment_status = edd_get_payment_status( absint( $payment['reference'] ) );
     
     edd_debug_log('[TEST] Previous payment status: ' . $previous_payment_status);
@@ -374,6 +381,7 @@ final class EDD_Chip_Payments {
         if ( $previous_payment_status != $new_status ) {
           edd_debug_log( '[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper( $previous_payment_status ) . ' to ' . strtoupper( $new_status ) );
           edd_update_payment_status( $payment['reference'], $new_status );
+          $this->release_lock( $payment['reference'] );
         }
         
         // Send to success page
@@ -390,6 +398,7 @@ final class EDD_Chip_Payments {
         if ( $previous_payment_status != $new_status ) {
           edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($previous_payment_status) . ' to ' . strtoupper($new_status));
           edd_update_payment_status( $payment['reference'], $new_status );
+          $this->release_lock( $payment['reference'] );
         }
 
         // Redirect to checkout
@@ -503,6 +512,14 @@ final class EDD_Chip_Payments {
     $transaction_url = '<a href="' . esc_url( $url ) . '" target="_blank">' . esc_html( $transaction_id ) . '</a>';
 
     return apply_filters( 'edd_' . $this->gateway_id . '_link_payment_details_transaction_id', $transaction_url );
+  }
+
+  public function get_lock( $order_id ) {
+    $GLOBALS['wpdb']->get_results( "SELECT GET_LOCK('edd_chip_payment_$order_id', 15);" );
+  }
+
+  public function release_lock( $order_id ) {
+    $GLOBALS['wpdb']->get_results( "SELECT RELEASE_LOCK('edd_chip_payment_$order_id');" );
   }
 
   public static function load_class_chip_edd() {
