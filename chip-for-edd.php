@@ -21,7 +21,7 @@ class ChipForEdd {
   private static $instance;
 
   public static function get_instance() {
-    if ( ! isset( self::$instance ) && ! ( self::$instance instanceof EDD_Chip_Payments ) ) {
+    if ( ! isset( self::$instance ) && ! ( self::$instance instanceof ChipForEdd ) ) {
       self::$instance = new static;
     }
 
