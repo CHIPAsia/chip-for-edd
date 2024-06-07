@@ -1,35 +1,15 @@
 <?php
 
-/**
- * Plugin Name: CHIP for Easy Digital Downloads
- * Plugin URI: https://wordpress.org/plugins/chip-for-easy-digital-downloads/
- * Description: CHIP - Digital Finance Platform
- * Version: 1.0.0
- * Author: Chip In Sdn Bhd
- * Author URI: https://www.chip-in.asia
- * Requires PHP: 7.1
- * Requires at least: 4.7
- * Requires Plugins: easy-digital-downloads
- *
- *
- * Copyright: © 2024 CHIP
- * License: GNU General Public License v3.0
- * License URI: https://www.gnu.org/licenses/gpl-3.0.html
- */
-
-use CHIP\EDD\Chip_EDD_API;
-
 final class EDD_Chip_Payments {
   private static $instance;
   public $gateway_id = 'chip';
+  public $client = null;
   public $purchase;
-
-  public $cached_api;
   public $secret_key;
   public $brand_id;
   public $public_key;
 
-  public static function getInstance() {
+  public static function get_instance() {
     if ( ! isset( self::$instance ) && ! ( self::$instance instanceof EDD_Chip_Payments ) ) {
       self::$instance = new EDD_Chip_Payments;
     }
@@ -51,24 +31,15 @@ final class EDD_Chip_Payments {
       return;
     }
 
-    // Check WP_DEBUG on
-    // if( WP_DEBUG === true ) { 
-    //   // enabled 
-    //   echo '<h1><center>WP_DEBUG enabled</center></h1>';
-    // } else {
-    //     // not enabled 
-    //     echo '<h1><center>WP_DEBUG not enabled</center></h1>';
-    // }
-    
-    $this->config();
-    $this->includes();
-    // $this->setup_client();
+    $this->setup_client();
     $this->filters(); // run filters
     $this->actions(); // call the purchase API
   }
 
   private function register() {
     add_filter( 'edd_payment_gateways', array( $this, 'register_gateway' ), 1, 1 );
+    add_filter( 'edd_is_gateway_setup_' . $this->gateway_id, array( $this, 'gateway_setup' ) );
+
     if ( is_admin() ) {
       add_filter( 'edd_settings_sections_gateways', array( $this, 'register_gateway_section' ), 1, 1 );
       add_filter( 'edd_settings_gateways', array( $this, 'register_gateway_settings' ), 1, 1 );
@@ -97,7 +68,7 @@ final class EDD_Chip_Payments {
 
   // Register Gateway section in EDD
   public function register_gateway_section( $gateway_sections ) {
-    $gateway_sections['chip'] = __( 'CHIP', 'chip-for-edd' );
+    $gateway_sections[ $this->gateway_id ] = __( 'CHIP', 'chip-for-edd' );
 
     return $gateway_sections;
   }
@@ -112,7 +83,7 @@ final class EDD_Chip_Payments {
         'tooltip_title' => __( 'Connect with CHIP', 'easy-digital-downloads' ),
         'tooltip_desc'  => __( 'Connecting your store with CHIP allows Easy Digital Downloads to automatically configure your store to securely communicate with CHIP.<br \><br \>', 'easy-digital-downloads'),
       ),
-      'chip_seller_id' => array(
+      'chip_secret_key' => array(
         'id'   => 'chip_secret_key',
         'name' => __( 'Secret Key', 'chip-for-edd' ),
         'desc' => __( 'Secret key can be obtained from CHIP Collect Dashboard >> Developers >> Keys', 'chip-for-edd' ),
@@ -129,38 +100,20 @@ final class EDD_Chip_Payments {
     );
 
     $default_chip_settings    = apply_filters( 'edd_default_chip_settings', $default_chip_settings );
-    $gateway_settings['chip'] = $default_chip_settings;
+    $gateway_settings[ $this->gateway_id ] = $default_chip_settings;
 
     return $gateway_settings;
-  }
-
-  // Load additional files
-  private function includes() {
-    require_once EDD_CHIP_CLASS_DIR . 'API.php';
-  } 
-
-  // Setup configuration for file paths
-  private function config() {
-    // Enabling Debug
-    // define( 'WP_DEBUG', true ); // delete before commit
-    // define( 'WP_DEBUG_LOG', true ); // delete before commit - use docker
-
-    // Define CHIP Plugin File
-    if (! defined('CHIP_PLUGIN_FILE')) {
-      define('CHIP_PLUGIN_FILE', __FILE__);
-    }
-
-    if (! defined('EDD_CHIP_CLASS_DIR')) {
-        $path = trailingslashit(plugin_dir_path(CHIP_PLUGIN_FILE)) . 'includes';
-        define('EDD_CHIP_CLASS_DIR', trailingslashit($path));
-    }
   }
 
   // Load additional files
 
   // Load actions
   private function actions() {
-    add_action('edd_gateway_' . $this->gateway_id, array($this, 'edd_purchase'));
+    add_action( 'edd_gateway_' . $this->gateway_id, array( $this, 'edd_purchase' ) );
+    add_action( 'edd_pre_process_purchase', array( $this, 'check_config' ), 1  );
+    add_action( 'edd_pre_process_purchase', array( $this, 'disable_address_requirement' ), 99999 );
+
+    add_action( 'edd_' . $this->gateway_id . '_cc_form', '__return_false');
   }
 
   // Create purchase
@@ -220,7 +173,7 @@ final class EDD_Chip_Payments {
       // 		'email'      => $profile['email']
       // 	);
 
-      // 	// Create a customer account if registration is not disabled
+        // Create a customer account if registration is not disabled
       // 	if ( 'none' !== edd_get_option( 'show_register_form' ) ) {
       // 		$args  = array(
       // 			'user_email'   => $profile['email'],
@@ -292,7 +245,7 @@ final class EDD_Chip_Payments {
           ],
         ];
 
-    $chip = $this->api(); // call CHIP API
+    $chip = $this->client; // call CHIP API
  
     $purchase = $chip->create_payment($params); // create payment for purchase
 
@@ -309,6 +262,11 @@ final class EDD_Chip_Payments {
 
   // Get webhook form CHIP
   public static function edd_chip_listener() {
+    // Bail out if edd not exists
+    if ( !function_exists( 'edd_is_gateway_active' ) ) {
+      return;
+    }
+
     // Check for callback and bail out if parameter not exists
     if (! isset( $_GET['payment-confirmation']) || $_GET['payment-confirmation'] !== 'chip') {
       return;
@@ -327,9 +285,9 @@ final class EDD_Chip_Payments {
 
     if (empty($public_key = edd_get_option('chip_public_key'))) {
       $secret_key = edd_get_option('chip_secret_key');
-      // $chip_api = new Chip_EDD_API($secret_key, '');
+      // $chip_api = new CHIP\EDD\Chip_EDD_API($secret_key, '');
       // $public_key = $chip_api->public_key();
-      // $chip = $this->api();
+      // $chip = $this->client;
       $public_key = (new EDD_Chip_Payments())->get_public_key();
 
       edd_debug_log('[INFO] Public key empty, updating new public key');
@@ -373,6 +331,11 @@ final class EDD_Chip_Payments {
 
   // Redirect from CHIP payment gateway
   public static function edd_chip_redirect() {
+    // Bail out if edd not exists
+    if ( !function_exists( 'edd_is_gateway_active' ) ) {
+      return;
+    }
+
     // Check for callback and bail out if parameter not exists
     if (! isset( $_GET['payment-redirect']) || $_GET['payment-redirect'] !== 'chip') {
       return;
@@ -402,7 +365,7 @@ final class EDD_Chip_Payments {
     }
 
     // Get the ID and check for payment status using CHIP API retrieve payment
-    $payment = (new EDD_Chip_Payments())->api()->get_payment($chip_id);
+    $payment = (new EDD_Chip_Payments())->client->get_payment($chip_id);
     edd_debug_log('[INFO] Sending CHIP API GET request for Payment Status');
 
     edd_debug_log('[INFO] Payment Info from CHIP API: ' . $payment['status']);
@@ -468,22 +431,10 @@ final class EDD_Chip_Payments {
     }
   }
 
-  // Cached API
-  public function api() {
-    if ( !$this->cached_api ) {
-      $this->cached_api = new Chip_EDD_API(
-        $this->secret_key,
-        $this->brand_id
-      );
-    }
-
-    return $this->cached_api;
-  }
-
   // Get public key
   public function get_public_key() {
     if ( empty( $this->public_key ) ){
-      $this->public_key = str_replace( '\n', "\n", $this->api()->public_key() );
+      $this->public_key = str_replace( '\n', "\n", $this->client->public_key() );
       // $this->update_option( 'public_key', $this->public_key );
     }
 
@@ -491,7 +442,8 @@ final class EDD_Chip_Payments {
   }
 
   public function filters() {
-    add_filter('edd_settings_gateways-chip_sanitize', array($this, 'reset_public_key'));
+    add_filter( 'edd_settings_gateways-chip_sanitize', array( $this, 'reset_public_key' ) );
+    add_filter( 'edd_purchase_form_required_fields', array( $this, 'purchase_form_required_fields' ), 9999 );
   }
 
   // Reset public_key when user save CHIP Secret key
@@ -500,27 +452,73 @@ final class EDD_Chip_Payments {
 
     return $input;
   }
-}
 
-add_action('init', array( 'EDD_Chip_Payments', 'edd_chip_listener'));
-add_action('init', array( 'EDD_Chip_Payments', 'edd_chip_redirect'));
-add_action( 'plugins_loaded', 'load_class_chip_edd' ); 
+  public function gateway_setup($is_setup) {
+    $chip_settings = array(
+      'chip_secret_key',
+      'chip_brand_id',
+    );
 
-function load_class_chip_edd() {
-  if (function_exists('edd_is_gateway_active')) {
-    EDD_Chip_Payments::getInstance();
+    foreach ( $chip_settings as $key ) {
+      if ( empty( edd_get_option( $key, '' ) ) ) {
+        $is_setup = false;
+        break;
+      }
+    }
+
+    return $is_setup;
+  }
+
+  public function check_config() {
+    $is_enabled = edd_is_gateway_active( $this->gateway_id );
+    if ( ( ! $is_enabled || false === $this->is_setup() ) && $this->gateway_id == edd_get_chosen_gateway() ) {
+      edd_set_error( 'chip_gateway_not_configured', __( 'There is an error with the CHIP configuration.', 'chip-for-edd' ) );
+    }
+  }
+
+  public function is_setup() {
+		if ( ! is_null( $this->is_setup ) ) {
+			return $this->is_setup;
+		}
+
+		$this->is_setup = edd_is_gateway_setup( $this->gateway_id );
+
+		return $this->is_setup;
+	}
+
+  public function setup_client() {
+    if ( ! $this->is_setup() ) {
+      return;
+    }
+
+    $config = array(
+      'secret_key' => edd_get_option( 'chip_secret_key', '' ),
+      'brand_id'   => edd_get_option( 'chip_brand_id', '' ),
+    );
+  
+    $config = apply_filters( 'edd_chip_client_config', $config );
+
+    $this->client = new CHIP\EDD\Chip_EDD_API( $config['secret_key'], $config['brand_id'] );
+  }
+
+  public function disable_address_requirement() {
+    if ( ! empty( $_POST['edd-gateway'] ) && $this->gateway_id == $_REQUEST['edd-gateway'] ) {
+      add_filter( 'edd_require_billing_address', '__return_false', 9999 );
+    }
+  }
+
+  public function purchase_form_required_fields() {
+    return array(
+      'edd_email' => array(
+        'error_id' => 'invalid_email',
+        'error_message' => __( 'Please enter a valid email address', 'chip-for-edd' )
+      ),
+    );
+  }
+
+  public static function load_class_chip_edd() {
+    if ( function_exists( 'edd_is_gateway_active' ) ) {
+      EDD_Chip_Payments::get_instance();
+    }
   }
 }
-
-// For logging purpose
-// function edd_chip_log( $message ) {
-//     if ( WP_DEBUG === true ) {
-//         if ( is_array( $message ) || is_object( $message ) ) {
-//             error_log( print_r( $message, true ) );
-//         } else {  
-//             error_log( $message );
-//         }
-//     }
-// }
-
-
