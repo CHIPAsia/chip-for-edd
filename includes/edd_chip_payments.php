@@ -28,6 +28,7 @@ final class EDD_Chip_Payments {
     // Initialize all 
     $this->secret_key = edd_get_option('chip_secret_key');
     $this->brand_id = edd_get_option('chip_brand_id');
+    $this->public_key = edd_get_option('chip_public_key');
     $this->send_receipt = edd_get_option('chip_send_receipt');
     $this->success_redirect_switch = edd_get_option('chip_disable_redirect');
     $this->success_callback_switch = edd_get_option('chip_disable_callback');
@@ -41,9 +42,6 @@ final class EDD_Chip_Payments {
     }
 
     $this->setup_client();
-
-    // Assign public key after setup_client
-    $this->public_key = $this->get_public_key();
 
     $this->filters(); // run filters
     $this->actions(); // call the purchase API
@@ -268,7 +266,9 @@ final class EDD_Chip_Payments {
 
     $content = file_get_contents('php://input');
 
-    $public_key = (self::get_instance()->public_key);
+    if ( empty( $public_key = ( self::get_instance() )->public_key ) ) {
+      $public_key = ( self::get_instance() )->get_public_key();
+    }
 
     edd_debug_log('[INFO] Public Key Set: ' . $public_key);
 
