@@ -50,6 +50,10 @@ class ChipForEdd {
     if ( !defined( 'EDD_CHIP_BASENAME' ) ) {
       define( 'EDD_CHIP_BASENAME', plugin_basename( EDD_CHIP_PLUGIN_FILE ) );
     }
+
+    if ( !defined( 'EDD_CHIP_MODULE_VERSION' ) ) {
+      define( 'EDD_CHIP_MODULE_VERSION', '1.0.0' );
+    }
   }
 
   // Load additional files

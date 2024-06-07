@@ -8,10 +8,11 @@ final class EDD_Chip_Payments {
   public $secret_key;
   public $brand_id;
   public $public_key;
+  public $is_setup = null;
 
   public static function get_instance() {
     if ( ! isset( self::$instance ) && ! ( self::$instance instanceof EDD_Chip_Payments ) ) {
-      self::$instance = new EDD_Chip_Payments;
+      self::$instance = new static;
     }
 
     return self::$instance;
@@ -43,8 +44,7 @@ final class EDD_Chip_Payments {
     if ( is_admin() ) {
       add_filter( 'edd_settings_sections_gateways', array( $this, 'register_gateway_section' ), 1, 1 );
       add_filter( 'edd_settings_gateways', array( $this, 'register_gateway_settings' ), 1, 1 );
-      // add_action( 'admin_notices', array( $this, 'chip_payments_notice' ) );
-      // add_filter( 'edd_payment_details_transaction_id-' . $this->gateway_id, array( $this, 'link_transaction_id' ), 10, 2 );
+      add_filter( 'edd_payment_details_transaction_id-' . $this->gateway_id, array( $this, 'link_transaction_id' ), 10, 2 );
     }
   }
 
@@ -99,7 +99,7 @@ final class EDD_Chip_Payments {
       ),
     );
 
-    $default_chip_settings    = apply_filters( 'edd_default_chip_settings', $default_chip_settings );
+    $default_chip_settings = apply_filters( 'edd_default_chip_settings', $default_chip_settings );
     $gateway_settings[ $this->gateway_id ] = $default_chip_settings;
 
     return $gateway_settings;
@@ -117,81 +117,32 @@ final class EDD_Chip_Payments {
   }
 
   // Create purchase
-  public function edd_purchase() {
-    // Get edd purchase data
-    $purchase_data = EDD()->session->get( 'edd_purchase' );
-    $profile   = EDD()->session->get( 'edd_purchase' )['user_info'];
+  public function edd_purchase( $payment_data ) {
 
-    // Loop thru $purchase_data['cart_details']
-    foreach($purchase_data['cart_details'] as $index => $product) {
-      $purchase_data['cart_details'][$index]['price'] = $product['price'] * 100;
+    $profile   = $payment_data['user_info'];
+    $full_name = $profile['first_name'] . ' ' . $profile['last_name'];
+
+    // Loop thru $payment_data['cart_details']
+    foreach($payment_data['cart_details'] as $index => $product) {
+      $payment_data['cart_details'][$index]['price'] = $product['price'] * 100;
     }
 
     // Setup payment details
     $payment = array(
-      // 'price' => $purchase_data['price'] * 100, // Example: 0.05 * 100 - RM5.00
-      'price' => $purchase_data['price'],
-      'date' => $purchase_data['date'],
-      'user_email' => $purchase_data['user_email'],
-      'purchase_key' => $purchase_data['purchase_key'],
-      'currency' => edd_get_option( 'currency' ),
-      'downloads' => $purchase_data['downloads'],
-      'cart_details' => $purchase_data['cart_details'],
-      'user_info' => $purchase_data['user_info'],
-      'status' => 'pending'
+      'price' => $payment_data['price'],
+      'date' => $payment_data['date'],
+      'user_email' => $payment_data['user_email'],
+      'purchase_key' => $payment_data['purchase_key'],
+      'currency' => edd_get_currency(),
+      'downloads' => $payment_data['downloads'],
+      'cart_details' => $payment_data['cart_details'],
+      'user_info' => $payment_data['user_info'],
+      'status' => 'pending',
+      'gateway' => $this->gateway_id,
     );
 
     // Record the pending payment (Insert into database) - Generate order ID
     $payment_id = edd_insert_payment($payment);
-
-    // Set and Get Transaction ID
-    $transaction_id = $payment_id;
-
-    edd_set_payment_transaction_id( $payment_id, $transaction_id );
-
-    // Checking
-    if ( ! is_user_logged_in() ) { // check if customer not login
-      $user = get_user_by( 'email', $profile['email'] );
-
-      // $user = get_user_by( 'email', 'awis@chip-in.asia' );
-
-      // if ( $user ) {
-      // 	edd_log_user_in( $user->ID, $user->user_login, '' );
-
-      // 	$customer = array(
-      // 		'first_name' => $user->first_name,
-      // 		'last_name'  => $user->last_name,
-      // 		'email'      => $user->user_email
-      // 	);
-
-      // } else {
-      // 	$names = explode( ' ', $profile['name'], 2 );
-
-      // 	$customer = array(
-      // 		'first_name' => $names[0],
-      // 		'last_name'  => isset( $names[1] ) ? $names[1] : '',
-      // 		'email'      => $profile['email']
-      // 	);
-
-        // Create a customer account if registration is not disabled
-      // 	if ( 'none' !== edd_get_option( 'show_register_form' ) ) {
-      // 		$args  = array(
-      // 			'user_email'   => $profile['email'],
-      // 			'user_login'   => $profile['email'],
-      // 			'display_name' => $profile['name'],
-      // 			'first_name'   => $customer['first_name'],
-      // 			'last_name'    => $customer['last_name'],
-      // 			'user_pass'    => wp_generate_password( 20 ),
-      // 		);
-
-      // 		$user_id = wp_insert_user( $args );
-
-      // 		edd_log_user_in( $user_id, $args['user_login'], $args['user_pass'] );
-      // 	}
-      // }
-
-      // EDD()->session->set( 'customer', $customer );
-    }
 
     // Set callback
     // $success_redirect_url = get_permalink( edd_get_option( 'success_page', false ));
@@ -199,65 +150,53 @@ final class EDD_Chip_Payments {
 
     // $failure_redirect = edd_send_back_to_checkout( '?payment-mode=chip' );
     // $failure_redirect_url = get_permalink(edd_get_option('failure_page' ));
-    $failure_redirect_url = add_query_arg(['payment-redirect' => 'chip'], trailingslashit(get_home_url()));
-    $success_redirect_url = get_permalink(edd_get_option('success_page'));
     
     // Set callback_url based on meta
-    $redirect_url = add_query_arg(['payment-redirect' => 'chip', 'identifier' => $payment_id . '_edd_chip_redirect'], trailingslashit(get_home_url()));
-    $callback_url = add_query_arg(['payment-confirmation' => 'chip'], trailingslashit(get_home_url()));
+    $redirect_url = add_query_arg( [ 'payment-redirect' => 'chip', 'identifier' => $payment_id, 'edd-gateway' => $this->gateway_id ], trailingslashit( home_url() ) );
+    $callback_url = add_query_arg( [ 'payment-confirmation' => 'chip'], trailingslashit( home_url() ) );
 
     // Set Params
     $params = [
-          // 'success_callback' => 'https://webhook.site/a7f5ac22-709a-4413-93d8-f2b1d4b00320',
-          'success_callback' => $callback_url, // https://< wordpress-web >/?payment-confirmation=chip
-          'success_redirect' => $redirect_url, // $callback_url
-          'failure_redirect' => $redirect_url, // $failure_redirect_url
+          'success_callback' => $callback_url,
+          'success_redirect' => $redirect_url,
+          'failure_redirect' => $redirect_url,
           'cancel_redirect'  => $redirect_url,
-          // 'force_recurring'  => $this->force_token == 'yes',
           // 'send_receipt'     => $this->purchase_sr == 'yes',
-          // 'creator_agent'    => 'WooCommerce: ' . WC_CHIP_MODULE_VERSION,
+          'creator_agent'    => 'EDD: ' . EDD_CHIP_MODULE_VERSION,
           'reference'        => $payment_id, //EDD()->session->get( 'edd_resume_payment' )
-          // 'platform'         => 'woocommerce',
-          // 'due'              => $this->get_due_timestamp(),
+          'platform'         => 'web', // to be modified later
           'purchase' => [
             // 'total_override' => round( $order->get_total() * 100 ),
-            // 'due_strict'     => $this->due_strict == 'yes',
-            // 'timezone'       => $this->purchase_tz,
-            // 'currency'       => $order->get_currency(),
-            // 'language'       => $this->get_language(),
-            'products'       => $purchase_data['cart_details'], // compulsory
+            'timezone'       => edd_get_timezone_id(),
+            'currency'       => edd_get_currency(),
+            'products'       => $payment_data['cart_details'], // compulsory
           ],
-          'brand_id' => $this->brand_id, // compulsory
+          'brand_id' => $this->brand_id,
           'client' => [
-            'email'                   => $profile['email'],
-            // 'phone'                   => substr( $order->get_billing_phone(), 0, 32 ), // compulsory
-            // 'full_name'               => $this->filter_customer_full_name( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() ),
-            // 'street_address'          => substr( $order->get_billing_address_1() . ' ' . $order->get_billing_address_2(), 0, 128 ) ,
-            // 'country'                 => substr( $order->get_billing_country(), 0, 2 ),
-            // 'city'                    => substr( $order->get_billing_city(), 0, 128 ) ,
-            // 'zip_code'                => substr( $order->get_billing_postcode(), 0, 32 ),
-            // 'state'                   => substr( $order->get_billing_state(), 0, 128 ),
-            // 'shipping_street_address' => substr( $order->get_shipping_address_1() . ' ' . $order->get_shipping_address_2(), 0, 128 ) ,
-            // 'shipping_country'        => substr( $order->get_shipping_country(), 0, 2 ),
-            // 'shipping_city'           => substr( $order->get_shipping_city(), 0, 128 ),
-            // 'shipping_zip_code'       => substr( $order->get_shipping_postcode(), 0, 32 ),
-            // 'shipping_state'          => substr( $order->get_shipping_state(), 0, 128 ),
+            'email' => $profile['email'],
+            'full_name' => substr( $full_name, 0, 128 ),
           ],
         ];
 
     $chip = $this->client; // call CHIP API
- 
+
     $purchase = $chip->create_payment($params); // create payment for purchase
 
-    // Store id in session
-    // $_SESSION['chip_id'] = $purchase['id'];
+    if ( !array_key_exists( 'id', $purchase ) ) {
+      edd_set_error( 'chip_failed_to_create_purchase', sprintf(__( 'There is an error to create purchase. %s', 'chip-for-edd' ), print_r($purchase,true) ) );
+    }
 
-    // Set identifier in meta
-    update_post_meta( $payment_id, '_edd_chip_redirect', $purchase['id'] );
+    $errors = edd_get_errors();
+    if ( ! empty( $errors ) ) {
+    	edd_send_back_to_checkout( '?payment-mode=chip' );
+    }
+
+    edd_set_payment_transaction_id( $payment_id, $purchase['id'], $payment_data['price'] );
+
     edd_debug_log( '[INFO] Adding meta for edd_chip_redirect, Order ID #' . $payment_id . ' with CHIP ID ' . $purchase['id']);
 
     // Redirect to CHIP checkout_url
-    wp_redirect($purchase['checkout_url']);
+    wp_redirect( $purchase['checkout_url'] );
   }
 
   // Get webhook form CHIP
@@ -348,13 +287,12 @@ final class EDD_Chip_Payments {
       $order_id = $matches[0];
       edd_debug_log('[INFO] Order ID retrieved from URL #' . $order_id);
     } else {
-        // No Valid order ID is pass
-        edd_debug_log('[INFO] Invalid Order ID format in parameter identifier');
-        return;
+      // No Valid order ID is pass
+      edd_debug_log('[INFO] Invalid Order ID format in parameter identifier');
+      return;
     }
 
-    // Get identifier to check in meta
-    $chip_id = get_post_meta($order_id, '_edd_chip_redirect', true);
+    $chip_id = edd_get_payment_transaction_id( $order_id );
 
     // If CHIP ID retrieved from meta
     if (! empty($chip_id)) {
@@ -365,14 +303,14 @@ final class EDD_Chip_Payments {
     }
 
     // Get the ID and check for payment status using CHIP API retrieve payment
-    $payment = (new EDD_Chip_Payments())->client->get_payment($chip_id);
+    $payment = ( self::get_instance() )->client->get_payment( $chip_id );
     edd_debug_log('[INFO] Sending CHIP API GET request for Payment Status');
 
     edd_debug_log('[INFO] Payment Info from CHIP API: ' . $payment['status']);
 
 
     // Change the order status
-    $order = (new EDD_Chip_Payments())->update_order_status($payment, $order_id);
+    ( self::get_instance() )->update_order_status( $payment, $order_id );
   }
 
   // Change the EDD order status
@@ -400,7 +338,9 @@ final class EDD_Chip_Payments {
         
         // Send to success page
         edd_debug_log('[INFO] Sending to success page');
-        edd_send_to_success_page();  
+        
+        edd_empty_cart();
+        edd_redirect(edd_get_receipt_page_uri( $order_id )); 
       } 
       // Check for the status if error
       elseif ($payment['status'] === 'error') {
@@ -477,14 +417,14 @@ final class EDD_Chip_Payments {
   }
 
   public function is_setup() {
-		if ( ! is_null( $this->is_setup ) ) {
-			return $this->is_setup;
-		}
+    if ( ! is_null( $this->is_setup ) ) {
+      return $this->is_setup;
+    }
 
-		$this->is_setup = edd_is_gateway_setup( $this->gateway_id );
+    $this->is_setup = edd_is_gateway_setup( $this->gateway_id );
 
-		return $this->is_setup;
-	}
+    return $this->is_setup;
+  }
 
   public function setup_client() {
     if ( ! $this->is_setup() ) {
@@ -514,6 +454,13 @@ final class EDD_Chip_Payments {
         'error_message' => __( 'Please enter a valid email address', 'chip-for-edd' )
       ),
     );
+  }
+
+  public function link_transaction_id( $transaction_id, $payment_id ) {
+    $url = 'https://gate.chip-in.asia/p/' . $transaction_id . '/receipt/';
+    $transaction_url = '<a href="' . esc_url( $url ) . '" target="_blank">' . esc_html( $transaction_id ) . '</a>';
+
+    return apply_filters( 'edd_' . $this->gateway_id . '_link_payment_details_transaction_id', $transaction_url );
   }
 
   public static function load_class_chip_edd() {
