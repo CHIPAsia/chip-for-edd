@@ -1,7 +1,6 @@
 <?php
-
-//total_override
 //concurrency between redirect and callback
+// payment method whitelist
 
 final class EDD_Chip_Payments {
   private static $instance;
@@ -158,7 +157,8 @@ final class EDD_Chip_Payments {
 
     // Loop thru $payment_data['cart_details']
     foreach($payment_data['cart_details'] as $index => $product) {
-      $payment_data['cart_details'][$index]['price'] = $product['price'] * 100;
+      $payment_data['cart_details'][$index]['price'] = round( $product['item_price'] * 100 );
+      $payment_data['cart_details'][$index]['discount'] = round( $product['discount'] * 100 );
     }
 
     // Setup payment details
@@ -191,26 +191,26 @@ final class EDD_Chip_Payments {
 
     // Set Params
     $params = [
-          'success_callback' => $callback_url,
-          'success_redirect' => $redirect_url,
-          'failure_redirect' => $redirect_url,
-          'cancel_redirect'  => $redirect_url,
-          'send_receipt'     => $this->send_receipt,
-          'creator_agent'    => 'EDD: ' . EDD_CHIP_MODULE_VERSION,
-          'reference'        => $payment_id, //EDD()->session->get( 'edd_resume_payment' )
-          'platform'         => 'web', // to be modified later
-          'purchase' => [
-            // 'total_override' => round( $order->get_total() * 100 ),
-            'timezone'       => edd_get_timezone_id(),
-            'currency'       => edd_get_currency(),
-            'products'       => $payment_data['cart_details'], // compulsory
-          ],
-          'brand_id' => $this->brand_id,
-          'client' => [
-            'email' => $profile['email'],
-            'full_name' => substr( $full_name, 0, 128 ),
-          ],
-        ];
+      'success_callback' => $callback_url,
+      'success_redirect' => $redirect_url,
+      'failure_redirect' => $redirect_url,
+      'cancel_redirect'  => $redirect_url,
+      'send_receipt'     => $this->send_receipt,
+      'creator_agent'    => 'EDD: ' . EDD_CHIP_MODULE_VERSION,
+      'reference'        => $payment_id, //EDD()->session->get( 'edd_resume_payment' )
+      'platform'         => 'web', // to be modified later
+      'purchase' => [
+        'total_override' => round( $payment['price'] * 100 ),
+        'timezone'       => edd_get_timezone_id(),
+        'currency'       => edd_get_currency(),
+        'products'       => $payment_data['cart_details'], // compulsory
+      ],
+      'brand_id' => $this->brand_id,
+      'client' => [
+        'email' => $profile['email'],
+        'full_name' => substr( $full_name, 0, 128 ),
+      ],
+    ];
 
     $chip = $this->client; // call CHIP API
 
