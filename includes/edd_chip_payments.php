@@ -1,6 +1,5 @@
 <?php
 //concurrency between redirect and callback
-// payment method whitelist
 
 final class EDD_Chip_Payments {
   private static $instance;
@@ -13,6 +12,7 @@ final class EDD_Chip_Payments {
   public $success_redirect_switch;
   public $success_callback_switch;
   public $public_key;
+  public $payment_method_whitelist;
   public $is_setup = null;
 
   public static function get_instance() {
@@ -28,6 +28,7 @@ final class EDD_Chip_Payments {
     $this->secret_key = edd_get_option('chip_secret_key');
     $this->brand_id = edd_get_option('chip_brand_id');
     $this->public_key = edd_get_option('chip_public_key');
+    $this->payment_method_whitelist = edd_get_option('chip_payment_method_whitelist');
     $this->send_receipt = edd_get_option('chip_send_receipt');
     $this->success_redirect_switch = edd_get_option('chip_disable_redirect');
     $this->success_callback_switch = edd_get_option('chip_disable_callback');
@@ -105,6 +106,13 @@ final class EDD_Chip_Payments {
         'type' => 'text',
         'size' => 'regular',
       ),
+      'chip_payment_method_whitelist' => array(
+        'id'   => 'chip_payment_method_whitelist',
+        'name' => __( 'Payment Method Whitelist', 'chip-for-edd' ),
+        'desc' => __( 'Choose payment method to enforce payment method whitelisting', 'chip-for-edd' ),
+        'type' => 'multicheck',
+        'options' => ['fpx' => 'FPX', 'fpx_b2b1' => 'FPX B2B1', 'mastercard' => 'Mastercard', 'maestro' => 'Maestro', 'visa' => 'Visa', 'razer_atome' => 'Atome', 'razer_grabpay' => 'Grabpay', 'razer_maybankqr' => 'Maybankqr', 'razer_shopeepay' => 'Shopeepay', 'razer_tng' => 'Tng', 'duitnow_qr' => 'Duitnow QR'],
+      ),
       'chip_send_receipt' => array(
         'id'   => 'chip_send_receipt',
         'name' => __( 'Send Receipt', 'chip-for-edd' ),
@@ -146,7 +154,7 @@ final class EDD_Chip_Payments {
     add_action( 'edd_pre_process_purchase', array( $this, 'check_config' ), 1  );
     add_action( 'edd_pre_process_purchase', array( $this, 'disable_address_requirement' ), 99999 );
 
-    add_action( 'edd_' . $this->gateway_id . '_cc_form', '__return_false');
+    add_action( 'edd_' . $this->gateway_id . '_cc_form', '__return_false' );
   }
 
   // Create purchase
@@ -177,13 +185,6 @@ final class EDD_Chip_Payments {
 
     // Record the pending payment (Insert into database) - Generate order ID
     $payment_id = edd_insert_payment($payment);
-
-    // Set callback
-    // $success_redirect_url = get_permalink( edd_get_option( 'success_page', false ));
-    // $success_callback_url = add_query_arg('payment-confirmation', 'chip', get_permalink( edd_get_option( 'success_page', false )));
-
-    // $failure_redirect = edd_send_back_to_checkout( '?payment-mode=chip' );
-    // $failure_redirect_url = get_permalink(edd_get_option('failure_page' ));
     
     // Set callback_url based on meta
     $redirect_url = add_query_arg( [ 'payment-redirect' => 'chip', 'identifier' => $payment_id, 'edd-gateway' => $this->gateway_id ], trailingslashit( home_url() ) );
@@ -210,7 +211,17 @@ final class EDD_Chip_Payments {
         'email' => $profile['email'],
         'full_name' => substr( $full_name, 0, 128 ),
       ],
+      'payment_method_whitelist' => array_keys( $this->payment_method_whitelist ),
     ];
+
+    foreach (['razer_atome', 'razer_grabpay', 'razer_tng', 'razer_shopeepay','razer_maybankqr'] as $ewallet) {
+      if ( in_array($ewallet, $params['payment_method_whitelist'] ) ) {
+        if ( !in_array('razer', $params['payment_method_whitelist'])) {
+          $params['payment_method_whitelist'][]= 'razer';
+          break;
+        }
+      }
+    }
 
     $chip = $this->client; // call CHIP API
 
@@ -287,12 +298,14 @@ final class EDD_Chip_Payments {
     if ($decoded_content['status'] === 'paid') {
 
       // Change payment status to paid
-      $old_status = 'pending'; // get status of payment
+      $previous_payment_status = edd_get_payment_status( absint( $decoded_content['reference'] ) );
       $new_status = 'complete';
-      
-      edd_debug_log('[INFO] Updating payment status for Order ID #' . $decoded_content['reference'] . ' from ' . strtoupper($old_status) . ' to ' . strtoupper($new_status));
-      edd_update_payment_status($decoded_content['reference'], $new_status, $old_status);
-      
+
+      if ( $previous_payment_status != $new_status ) {
+        edd_debug_log('[INFO] Updating payment status for Order ID #' . $decoded_content['reference'] . ' from ' . strtoupper($previous_payment_status) . ' to ' . strtoupper($new_status));
+        edd_update_payment_status( absint( $decoded_content['reference'] ), $new_status );
+      }
+ 
 	    edd_die('Callback processed successfully', 'CHIP', 200);
     } 
   }
@@ -344,13 +357,12 @@ final class EDD_Chip_Payments {
 
   // Change the EDD order status
   public function update_order_status($payment, $order_id) {
-    // $old_status = 'pending'; // get status of payment
-
     edd_debug_log('[INFO] Checking and updating order status (function: update_order_status())');
 
     // Get payment status in DB
-    $payment_db = new EDD_Payment($order_id);
-    $previous_payment_status = strtolower($payment_db->status);
+    // $payment_db = new EDD_Payment($order_id);
+    // $previous_payment_status = strtolower($payment_db->status);
+    $previous_payment_status = edd_get_payment_status( absint( $payment['reference'] ) );
     
     edd_debug_log('[TEST] Previous payment status: ' . $previous_payment_status);
 
@@ -361,9 +373,11 @@ final class EDD_Chip_Payments {
       if ($payment['status'] === 'paid') {
         // Change payment status to paid
         $new_status = 'complete';
-        
-        edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($previous_payment_status) . ' to ' . strtoupper($new_status));
-        edd_update_payment_status($payment['reference'], $new_status, $previous_payment_status);
+  
+        if ( $previous_payment_status != $new_status ) {
+          edd_debug_log( '[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper( $previous_payment_status ) . ' to ' . strtoupper( $new_status ) );
+          edd_update_payment_status( $payment['reference'], $new_status );
+        }
         
         // Send to success page
         edd_debug_log('[INFO] Sending to success page');
@@ -376,28 +390,28 @@ final class EDD_Chip_Payments {
         // Change payment status to failed
         $new_status = 'failed';
         
-        edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($previous_payment_status) . ' to ' . strtoupper($new_status));
-        edd_update_payment_status($payment['reference'], $new_status, $previous_payment_status);
+        if ( $previous_payment_status != $new_status ) {
+          edd_debug_log('[INFO] Updating payment status for Order ID #' . $payment['reference'] . ' from ' . strtoupper($previous_payment_status) . ' to ' . strtoupper($new_status));
+          edd_update_payment_status( $payment['reference'], $new_status );
+        }
 
         // Redirect to checkout
         // edd_send_back_to_checkout( '?payment-mode=chip' );
 
         // Redirect to failed page
         edd_debug_log('[INFO] Redirecting to failure page');
-        edd_redirect(get_permalink(edd_get_option('failure_page' )));
       }
       elseif ($payment['status'] === 'viewed') {
         edd_debug_log('[INFO] Payment Status in CHIP API: ' . $payment['status']);
-        return;
       }
       elseif ($payment['status'] === 'overdue') {
         edd_debug_log('[INFO] Payment Status in CHIP API: ' . $payment['status']);
-        return;
       }
     } else {
         edd_debug_log('[INFO] Payment Status in DB is empty');
-        return;
     }
+
+    edd_redirect( get_permalink( edd_get_option( 'failure_page' ) ) );
   }
 
   // Get public key
