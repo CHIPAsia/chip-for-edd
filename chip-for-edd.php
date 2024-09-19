@@ -52,7 +52,7 @@ class ChipForEdd {
     }
 
     if ( !defined( 'EDD_CHIP_MODULE_VERSION' ) ) {
-      define( 'EDD_CHIP_MODULE_VERSION', '1.0.0' );
+      define( 'EDD_CHIP_MODULE_VERSION', '1.1.0' );
     }
   }
 
