@@ -196,7 +196,7 @@ final class EDD_Chip_Payments {
       'send_receipt'     => $this->send_receipt,
       'creator_agent'    => 'EDD: ' . EDD_CHIP_MODULE_VERSION,
       'reference'        => $payment_id, //EDD()->session->get( 'edd_resume_payment' )
-      'platform'         => 'EDD', // to be modified later
+      'platform'         => 'EDD',
       'purchase' => [
         'total_override' => round( $payment['price'] * 100 ),
         'timezone'       => edd_get_timezone_id(),
