@@ -4,7 +4,7 @@
  * Plugin Name: CHIP for Easy Digital Downloads
  * Plugin URI: https://wordpress.org/plugins/chip-for-easy-digital-downloads/
  * Description: CHIP - Digital Finance Platform
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Chip In Sdn Bhd
  * Author URI: https://www.chip-in.asia
  * Requires PHP: 7.1
@@ -52,7 +52,7 @@ class ChipForEdd {
     }
 
     if ( !defined( 'EDD_CHIP_MODULE_VERSION' ) ) {
-      define( 'EDD_CHIP_MODULE_VERSION', '1.0.0' );
+      define( 'EDD_CHIP_MODULE_VERSION', '1.1.0' );
     }
   }
 

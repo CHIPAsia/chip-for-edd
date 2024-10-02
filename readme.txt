@@ -3,7 +3,7 @@ Contributors: chipasia, awisqirani, wanzulnet
 Tags: chip
 Requires at least: 4.7
 Tested up to: 6.5
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 Requires PHP: 7.1
 License: GPLv3
 License URI: http://www.gnu.org/licenses/gpl-3.0.html
@@ -26,6 +26,9 @@ This plugin will enable your Easy Digital Downloads site to be integrated with C
 Will be added later
 
 == Changelog ==
+
+= 1.1.0 2024-09-30 =
+* Change platform from web to EDD
 
 = 1.0.0 2024-06-01 =
 * Initial release.
