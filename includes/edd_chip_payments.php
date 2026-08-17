@@ -7,6 +7,12 @@ final class EDD_Chip_Payments {
   // merchant's available methods, prioritising dnqr.
   const DUITNOW_GROUP = array( 'duitnow_qr', 'dnqr' );
 
+  // ShopeePay group: razer_shopeepay (legacy) and shopee_pay (modern) are
+  // interchangeable identifiers. Merchants configure the single legacy
+  // 'razer_shopeepay' entry; the runtime resolves the group against the
+  // merchant's available methods, prioritising shopee_pay.
+  const SHOPEE_GROUP = array( 'razer_shopeepay', 'shopee_pay' );
+
   private static $instance;
   public $gateway_id = 'chip';
   public $client = null;
@@ -217,10 +223,11 @@ final class EDD_Chip_Payments {
       'payment_method_whitelist' => array_keys( $this->payment_method_whitelist ),
     ];
 
-    // Resolve the DuitNow QR group (duitnow_qr / dnqr) against the merchant's
-    // available payment methods, prioritising dnqr. Only touches the whitelist
+    // Resolve the payment method groups (DuitNow QR: duitnow_qr / dnqr; ShopeePay:
+    // razer_shopeepay / shopee_pay) against the merchant's available payment methods,
+    // prioritising the modern identifier in each group. Only touches the whitelist
     // when a group member is configured; otherwise returns it unchanged.
-    $params['payment_method_whitelist'] = $this->resolve_duitnow_methods(
+    $params['payment_method_whitelist'] = $this->resolve_payment_method_groups(
       $params['payment_method_whitelist'],
       edd_get_currency(),
       round( $payment['price'] * 100 )
@@ -266,32 +273,50 @@ final class EDD_Chip_Payments {
     wp_redirect( $purchase['checkout_url'] );
   }
 
-  // Resolve the DuitNow QR group (duitnow_qr / dnqr) against the merchant's
-  // available payment methods, prioritising dnqr.
+  // Resolve the payment method groups (DuitNow QR: duitnow_qr / dnqr; ShopeePay:
+  // razer_shopeepay / shopee_pay) against the merchant's available payment methods,
+  // prioritising the modern identifier in each group.
   //
-  //   1. Short-circuit: if no dnqr-group member is in the whitelist, return it
+  //   1. Short-circuit: if no group member is in the whitelist, return it
   //      unchanged (no API call).
-  //   2. Expand: any group member widens to the full group.
-  //   3. Cache: 30-min WP transient keyed by brand|currency|amount-bucket.
+  //   2. Expand: any configured group member widens to the full group.
+  //   3. Cache: a single 30-min WP transient (keyed by brand|currency|amount-bucket)
+  //      shared by all configured groups.
   //   4. API fail: fall back to the expanded whitelist.
-  //   5. Intersect the group with the merchant's available methods.
-  //   6. Priority: drop duitnow_qr when dnqr is available.
-  //   7. Final: original non-group entries + resolved group.
-  private function resolve_duitnow_methods( $whitelist, $currency, $amount ) {
-    // 1. Short-circuit: no group member configured -> unchanged, no API call.
-    $has_group_member = count( array_intersect( $whitelist, self::DUITNOW_GROUP ) ) > 0;
+  //   5. Intersect each group with the merchant's available methods.
+  //   6. Priority: drop the legacy identifier when the modern one is available.
+  //   7. Final: original non-group entries + resolved groups.
+  private function resolve_payment_method_groups( $whitelist, $currency, $amount ) {
+    // Each entry: the interchangeable-identifier group, plus the preferred
+    // (modern) member. Legacy identifier is used only as a fallback.
+    $groups = array(
+      array( 'members' => self::DUITNOW_GROUP, 'preferred' => 'dnqr' ),
+      array( 'members' => self::SHOPEE_GROUP,  'preferred' => 'shopee_pay' ),
+    );
 
-    if ( ! $has_group_member ) {
+    // 1. Short-circuit: no configured group member -> unchanged, no API call.
+    $configured_groups = array();
+    foreach ( $groups as $group ) {
+      if ( count( array_intersect( $whitelist, $group['members'] ) ) > 0 ) {
+        $configured_groups[] = $group;
+      }
+    }
+
+    if ( empty( $configured_groups ) ) {
       return $whitelist;
     }
 
-    // 2. Expand the group in-memory.
-    $expanded = array_values( array_unique( array_merge( $whitelist, self::DUITNOW_GROUP ) ) );
+    // 2. Expand all configured groups in-memory.
+    $expanded = $whitelist;
+    foreach ( $configured_groups as $group ) {
+      $expanded = array_merge( $expanded, $group['members'] );
+    }
+    $expanded = array_values( array_unique( $expanded ) );
 
     // 3. Cache key: brand + currency + amount-bucket (round to 100-sen steps).
     $cache_key = 'chip_pm_' . md5( $this->brand_id . '|' . $currency . '|' . intval( $amount / 100 ) );
 
-    // 3. Try cache; on miss call /payment_methods/.
+    // 3. Try cache; on miss call /payment_methods/ once.
     $available = get_transient( $cache_key );
     if ( false === $available ) {
       $response = $this->client->payment_methods( $currency, '', $amount ); // No language param.
@@ -303,17 +328,27 @@ final class EDD_Chip_Payments {
       set_transient( $cache_key, $available, 30 * MINUTE_IN_SECONDS );
     }
 
-    // 5. Keep only group members the merchant actually has.
-    $resolved_group = array_values( array_intersect( self::DUITNOW_GROUP, $available ) );
+    // 5-6. Resolve each configured group against the merchant's methods,
+    //      keeping the modern identifier when available, else falling back
+    //      to the legacy identifier.
+    $resolved = array();
+    foreach ( $configured_groups as $group ) {
+      $preferred = $group['preferred'];
+      $legacy = array_values( array_diff( $group['members'], array( $preferred ) ) );
 
-    // 6. Priority: dnqr wins when both are present.
-    if ( in_array( 'dnqr', $resolved_group, true ) ) {
-      $resolved_group = array_values( array_diff( $resolved_group, array( 'duitnow_qr' ) ) );
+      if ( in_array( $preferred, $available, true ) ) {
+        $resolved_group = array( $preferred );
+      } else {
+        $resolved_group = array_values( array_intersect( $legacy, $available ) );
+      }
+
+      $resolved = array_merge( $resolved, $resolved_group );
     }
 
-    // 7. Build final whitelist: original entries (group members stripped) + resolved group.
-    $final = array_values( array_diff( $expanded, self::DUITNOW_GROUP ) );
-    $final = array_merge( $final, $resolved_group );
+    // 7. Build final whitelist: original entries (group members stripped) + resolved groups.
+    $all_group_members = array_merge( self::DUITNOW_GROUP, self::SHOPEE_GROUP );
+    $final = array_values( array_diff( $expanded, $all_group_members ) );
+    $final = array_merge( $final, $resolved );
 
     return $final;
   }
