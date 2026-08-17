@@ -1,6 +1,18 @@
 <?php
 
 final class EDD_Chip_Payments {
+  // DuitNow QR group: duitnow_qr (legacy) and dnqr (modern) are
+  // interchangeable identifiers. Merchants configure the single
+  // 'duitnow_qr' entry; the runtime resolves the group against the
+  // merchant's available methods, prioritising dnqr.
+  const DUITNOW_GROUP = array( 'duitnow_qr', 'dnqr' );
+
+  // ShopeePay group: razer_shopeepay (legacy) and shopee_pay (modern) are
+  // interchangeable identifiers. Merchants configure the single legacy
+  // 'razer_shopeepay' entry; the runtime resolves the group against the
+  // merchant's available methods, prioritising shopee_pay.
+  const SHOPEE_GROUP = array( 'razer_shopeepay', 'shopee_pay' );
+
   private static $instance;
   public $gateway_id = 'chip';
   public $client = null;
@@ -28,6 +40,21 @@ final class EDD_Chip_Payments {
     $this->brand_id = edd_get_option('chip_brand_id');
     $this->public_key = edd_get_option('chip_public_key');
     $this->payment_method_whitelist = edd_get_option('chip_payment_method_whitelist');
+
+    // Backward-compat: migrate the legacy 'razer_shopeepay' whitelist entry to
+    // the modern 'shopee_pay' key in-memory, so merchants who saved the old key
+    // keep working without re-saving their settings. DuitNow QR is untouched.
+    if ( is_array( $this->payment_method_whitelist ) ) {
+      if ( in_array( 'razer_shopeepay', $this->payment_method_whitelist, true ) && ! in_array( 'shopee_pay', $this->payment_method_whitelist, true ) ) {
+        $this->payment_method_whitelist = array_map(
+          function ( $method ) {
+            return ( 'razer_shopeepay' === $method ) ? 'shopee_pay' : $method;
+          },
+          $this->payment_method_whitelist
+        );
+      }
+    }
+
     $this->send_receipt = edd_get_option('chip_send_receipt');
     $this->success_redirect_switch = edd_get_option('chip_disable_redirect');
     $this->success_callback_switch = edd_get_option('chip_disable_callback');
@@ -110,7 +137,7 @@ final class EDD_Chip_Payments {
         'name' => __( 'Payment Method Whitelist', 'chip-for-edd' ),
         'desc' => __( 'Choose payment method to enforce payment method whitelisting', 'chip-for-edd' ),
         'type' => 'multicheck',
-        'options' => ['fpx' => 'FPX', 'fpx_b2b1' => 'FPX B2B1', 'mastercard' => 'Mastercard', 'maestro' => 'Maestro', 'visa' => 'Visa', 'razer_atome' => 'Atome', 'razer_grabpay' => 'Grabpay', 'razer_maybankqr' => 'Maybankqr', 'razer_shopeepay' => 'Shopeepay', 'razer_tng' => 'Tng', 'duitnow_qr' => 'Duitnow QR'],
+        'options' => ['fpx' => 'FPX', 'fpx_b2b1' => 'FPX B2B1', 'mastercard' => 'Mastercard', 'maestro' => 'Maestro', 'visa' => 'Visa', 'razer_atome' => 'Atome', 'razer_grabpay' => 'Grabpay', 'razer_maybankqr' => 'Maybankqr', 'shopee_pay' => 'ShopeePay', 'razer_tng' => 'Tng', 'duitnow_qr' => 'DuitNow QR', 'crypto_coin' => 'Crypto Coin'],
       ),
       'chip_send_receipt' => array(
         'id'   => 'chip_send_receipt',
@@ -211,6 +238,16 @@ final class EDD_Chip_Payments {
       'payment_method_whitelist' => array_keys( $this->payment_method_whitelist ),
     ];
 
+    // Resolve the payment method groups (DuitNow QR: duitnow_qr / dnqr; ShopeePay:
+    // razer_shopeepay / shopee_pay) against the merchant's available payment methods,
+    // prioritising the modern identifier in each group. Only touches the whitelist
+    // when a group member is configured; otherwise returns it unchanged.
+    $params['payment_method_whitelist'] = $this->resolve_payment_method_groups(
+      $params['payment_method_whitelist'],
+      edd_get_currency(),
+      round( $payment['price'] * 100 )
+    );
+
     foreach ( ['razer_atome', 'razer_grabpay', 'razer_tng', 'razer_shopeepay','razer_maybankqr'] as $ewallet ) {
       if ( in_array($ewallet, $params['payment_method_whitelist'] ) ) {
         if ( !in_array( 'razer', $params['payment_method_whitelist'] ) ) {
@@ -249,6 +286,86 @@ final class EDD_Chip_Payments {
 
     // Redirect to CHIP checkout_url
     wp_redirect( $purchase['checkout_url'] );
+  }
+
+  // Resolve the payment method groups (DuitNow QR: duitnow_qr / dnqr; ShopeePay:
+  // razer_shopeepay / shopee_pay) against the merchant's available payment methods,
+  // prioritising the modern identifier in each group.
+  //
+  //   1. Short-circuit: if no group member is in the whitelist, return it
+  //      unchanged (no API call).
+  //   2. Expand: any configured group member widens to the full group.
+  //   3. Cache: a single 30-min WP transient (keyed by brand|currency|amount-bucket)
+  //      shared by all configured groups.
+  //   4. API fail: fall back to the expanded whitelist.
+  //   5. Intersect each group with the merchant's available methods.
+  //   6. Priority: drop the legacy identifier when the modern one is available.
+  //   7. Final: original non-group entries + resolved groups.
+  private function resolve_payment_method_groups( $whitelist, $currency, $amount ) {
+    // Each entry: the interchangeable-identifier group, plus the preferred
+    // (modern) member. Legacy identifier is used only as a fallback.
+    $groups = array(
+      array( 'members' => self::DUITNOW_GROUP, 'preferred' => 'dnqr' ),
+      array( 'members' => self::SHOPEE_GROUP,  'preferred' => 'shopee_pay' ),
+    );
+
+    // 1. Short-circuit: no configured group member -> unchanged, no API call.
+    $configured_groups = array();
+    foreach ( $groups as $group ) {
+      if ( count( array_intersect( $whitelist, $group['members'] ) ) > 0 ) {
+        $configured_groups[] = $group;
+      }
+    }
+
+    if ( empty( $configured_groups ) ) {
+      return $whitelist;
+    }
+
+    // 2. Expand all configured groups in-memory.
+    $expanded = $whitelist;
+    foreach ( $configured_groups as $group ) {
+      $expanded = array_merge( $expanded, $group['members'] );
+    }
+    $expanded = array_values( array_unique( $expanded ) );
+
+    // 3. Cache key: brand + currency + amount-bucket (round to 100-sen steps).
+    $cache_key = 'chip_pm_' . md5( $this->brand_id . '|' . $currency . '|' . intval( $amount / 100 ) );
+
+    // 3. Try cache; on miss call /payment_methods/ once.
+    $available = get_transient( $cache_key );
+    if ( false === $available ) {
+      $response = $this->client->payment_methods( $currency, '', $amount ); // No language param.
+      if ( ! is_array( $response ) || ! isset( $response['available_payment_methods'] ) ) {
+        // 4. API failed -> fall back to the expanded whitelist.
+        return $expanded;
+      }
+      $available = $response['available_payment_methods'];
+      set_transient( $cache_key, $available, 30 * MINUTE_IN_SECONDS );
+    }
+
+    // 5-6. Resolve each configured group against the merchant's methods,
+    //      keeping the modern identifier when available, else falling back
+    //      to the legacy identifier.
+    $resolved = array();
+    foreach ( $configured_groups as $group ) {
+      $preferred = $group['preferred'];
+      $legacy = array_values( array_diff( $group['members'], array( $preferred ) ) );
+
+      if ( in_array( $preferred, $available, true ) ) {
+        $resolved_group = array( $preferred );
+      } else {
+        $resolved_group = array_values( array_intersect( $legacy, $available ) );
+      }
+
+      $resolved = array_merge( $resolved, $resolved_group );
+    }
+
+    // 7. Build final whitelist: original entries (group members stripped) + resolved groups.
+    $all_group_members = array_merge( self::DUITNOW_GROUP, self::SHOPEE_GROUP );
+    $final = array_values( array_diff( $expanded, $all_group_members ) );
+    $final = array_merge( $final, $resolved );
+
+    return $final;
   }
 
   // Get webhook form CHIP

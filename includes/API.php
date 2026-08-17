@@ -114,4 +114,16 @@ class Chip_EDD_API
 
     return $result;
   }
+
+  // Get the payment methods available for a brand at a given currency/amount.
+  public function payment_methods( $currency, $language, $amount ) {
+    // $this->log_info( 'getting payment methods' );
+
+    $result = $this->call(
+      'GET',
+      "/payment_methods/?brand_id={$this->brand_id}&currency={$currency}&language={$language}&amount={$amount}"
+    );
+
+    return $result;
+  }
 }
