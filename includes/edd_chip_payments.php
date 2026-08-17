@@ -40,6 +40,21 @@ final class EDD_Chip_Payments {
     $this->brand_id = edd_get_option('chip_brand_id');
     $this->public_key = edd_get_option('chip_public_key');
     $this->payment_method_whitelist = edd_get_option('chip_payment_method_whitelist');
+
+    // Backward-compat: migrate the legacy 'razer_shopeepay' whitelist entry to
+    // the modern 'shopee_pay' key in-memory, so merchants who saved the old key
+    // keep working without re-saving their settings. DuitNow QR is untouched.
+    if ( is_array( $this->payment_method_whitelist ) ) {
+      if ( in_array( 'razer_shopeepay', $this->payment_method_whitelist, true ) && ! in_array( 'shopee_pay', $this->payment_method_whitelist, true ) ) {
+        $this->payment_method_whitelist = array_map(
+          function ( $method ) {
+            return ( 'razer_shopeepay' === $method ) ? 'shopee_pay' : $method;
+          },
+          $this->payment_method_whitelist
+        );
+      }
+    }
+
     $this->send_receipt = edd_get_option('chip_send_receipt');
     $this->success_redirect_switch = edd_get_option('chip_disable_redirect');
     $this->success_callback_switch = edd_get_option('chip_disable_callback');
@@ -122,7 +137,7 @@ final class EDD_Chip_Payments {
         'name' => __( 'Payment Method Whitelist', 'chip-for-edd' ),
         'desc' => __( 'Choose payment method to enforce payment method whitelisting', 'chip-for-edd' ),
         'type' => 'multicheck',
-        'options' => ['fpx' => 'FPX', 'fpx_b2b1' => 'FPX B2B1', 'mastercard' => 'Mastercard', 'maestro' => 'Maestro', 'visa' => 'Visa', 'razer_atome' => 'Atome', 'razer_grabpay' => 'Grabpay', 'razer_maybankqr' => 'Maybankqr', 'razer_shopeepay' => 'ShopeePay', 'razer_tng' => 'Tng', 'duitnow_qr' => 'DuitNow QR'],
+        'options' => ['fpx' => 'FPX', 'fpx_b2b1' => 'FPX B2B1', 'mastercard' => 'Mastercard', 'maestro' => 'Maestro', 'visa' => 'Visa', 'razer_atome' => 'Atome', 'razer_grabpay' => 'Grabpay', 'razer_maybankqr' => 'Maybankqr', 'shopee_pay' => 'ShopeePay', 'razer_tng' => 'Tng', 'duitnow_qr' => 'DuitNow QR'],
       ),
       'chip_send_receipt' => array(
         'id'   => 'chip_send_receipt',
