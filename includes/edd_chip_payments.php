@@ -137,7 +137,7 @@ final class EDD_Chip_Payments {
         'name' => __( 'Payment Method Whitelist', 'chip-for-edd' ),
         'desc' => __( 'Choose payment method to enforce payment method whitelisting', 'chip-for-edd' ),
         'type' => 'multicheck',
-        'options' => ['fpx' => 'FPX', 'fpx_b2b1' => 'FPX B2B1', 'mastercard' => 'Mastercard', 'maestro' => 'Maestro', 'visa' => 'Visa', 'razer_atome' => 'Atome', 'razer_grabpay' => 'Grabpay', 'razer_maybankqr' => 'Maybankqr', 'shopee_pay' => 'ShopeePay', 'razer_tng' => 'Tng', 'duitnow_qr' => 'DuitNow QR'],
+        'options' => ['fpx' => 'FPX', 'fpx_b2b1' => 'FPX B2B1', 'mastercard' => 'Mastercard', 'maestro' => 'Maestro', 'visa' => 'Visa', 'razer_atome' => 'Atome', 'razer_grabpay' => 'Grabpay', 'razer_maybankqr' => 'Maybankqr', 'shopee_pay' => 'ShopeePay', 'razer_tng' => 'Tng', 'duitnow_qr' => 'DuitNow QR', 'crypto_coin' => 'Crypto Coin'],
       ),
       'chip_send_receipt' => array(
         'id'   => 'chip_send_receipt',
